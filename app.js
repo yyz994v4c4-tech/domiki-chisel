@@ -72,7 +72,7 @@ function save(){try{localStorage.setItem('number-houses-settings',JSON.stringify
 function shuffle(a){return a.map(v=>({v,r:Math.random()})).sort((a,b)=>a.r-b.r).map(x=>x.v)}
 function choices(expected,max=state.n){const vals=new Set([expected]);for(const x of shuffle(Array.from({length:max+1},(_,i)=>i))) {if(vals.size>=4)break;vals.add(x)}return shuffle([...vals])}
 function newSession(mode=(state&&state.mode)||'houses',n=settings.number){
- speechSynthesisSafeCancel(); clearTimeout(rewardTimer); closeDialog($('#rewardDialog')); closeDialog($('#finishDialog'));
+ clearPendingSpeech(); clearTimeout(rewardTimer); closeDialog($('#rewardDialog')); closeDialog($('#finishDialog'));
  settings.number=n;save();state={mode,n,step:0,solved:0,helped:false,errors:0,placed:0,selected:null,done:false,compareStage:0,links:false,removed:[],sessionIndependent:0,sessionHelped:0};initTask();render();window.scrollTo(0,0);
 }
 function initTask(){
@@ -187,45 +187,60 @@ function renderReward(){
 }
 function nextTask(){clearTimeout(rewardTimer);closeDialog($('#rewardDialog'));if(state.solved>=taskLimit())return finish();state.step++;initTask();render();speak(instructionText())}
 function finish(){clearTimeout(rewardTimer);closeDialog($('#rewardDialog'));state.done=true;render();$('#finishText').textContent=`Выполнено заданий: ${state.solved}. ${state.solved?'Спасибо за старание!':'Продолжим в другой раз.'}`;openDialog($('#finishDialog'));speak('На сегодня готово. Теперь можно отдохнуть.');stopMusic()}
-let activeUtterance=null,speechTimer=null,speechGeneration=0,lastSpeechCancel=0;
+let activeUtterance=null,speechTimer=null,speechGeneration=0,lastSpeechCancel=0,speechQueue=[],speechRequest=0;
 function voiceStatus(text){const el=$('#voiceStatus');if(el)el.textContent=text}
-function speechSynthesisSafeCancel(){
+function clearPendingSpeech(){speechQueue=[];speechRequest++}
+function speechSynthesisSafeCancel(keepQueue=false){
+ if(!keepQueue)clearPendingSpeech();
  clearTimeout(speechTimer);speechTimer=null;speechGeneration++;
  try{const synth=window.speechSynthesis;if(synth&&(activeUtterance||synth.speaking||synth.pending)){activeUtterance=null;lastSpeechCancel=Date.now();synth.cancel()}}catch(e){activeUtterance=null}
 }
 function loadVoices(){try{if(!window.speechSynthesis||typeof window.speechSynthesis.getVoices!=='function')return;voices=window.speechSynthesis.getVoices().filter(v=>/^ru(?:[-_]|$)/i.test(v.lang));if($('#adultDialog').open)voiceOptions()}catch(e){voices=[]}}
 function speak(text,force=false){try{speakAvailable(text,force)}catch(e){voiceStatus('Не удалось запустить голос. Нажмите «Послушать» ещё раз.')}}
-function speakAvailable(text,force=false,attempt=0){
+function speakAvailable(text,force=false){
  if(!settings.voice&&!force)return;
  const synth=window.speechSynthesis,Utterance=window.SpeechSynthesisUtterance;
  if(!synth||typeof synth.speak!=='function'||typeof Utterance!=='function'){voiceStatus('Браузер не предоставляет озвучку.');return}
- // Refresh inside the tap handler: Safari may return no voices on page load.
- loadVoices();speechSynthesisSafeCancel();stopMusic();
- const ticket=speechGeneration;
+ const request=++speechRequest;
+ // Keep only the latest instruction. Short phrases finish without cancel(),
+ // which otherwise drops the next user-initiated utterance in older Safari.
+ speechQueue=(String(text).match(/[^.!?,]+[.!?,]?/g)||[]).map(part=>({text:part.trim(),force,request,attempt:0})).filter(part=>part.text);
+ stopMusic();
+ if(!activeUtterance)startNextSpeech();
+}
+function startNextSpeech(retryItem){
+ if(activeUtterance)return;
+ const item=retryItem||speechQueue.shift();
+ if(!item){if(settings.music)startMusic();return}
+ const synth=window.speechSynthesis,Utterance=window.SpeechSynthesisUtterance;
+ clearTimeout(speechTimer);loadVoices();
+ const ticket=++speechGeneration;
  const preferred=voices.find(v=>v.voiceURI===settings.voiceURI);
  const local=voices.filter(v=>v.localService!==false);
- const chosen=(attempt===0&&preferred)||local.find(v=>/milena|милена|katya|катя|irina|ирина/i.test(v.name))||local[0]||voices[0];
- const u=new Utterance(String(text));u.lang='ru-RU';u.rate=.82;u.pitch=1;u.volume=1;if(chosen)u.voice=chosen;
- // Keep a strong reference until the engine finishes the phrase.
+ const chosen=(item.attempt===0&&preferred)||local.find(v=>/milena|милена|katya|катя|irina|ирина/i.test(v.name))||local[0]||voices[0];
+ const u=new Utterance(item.text);u.lang='ru-RU';u.rate=.82;u.pitch=1;u.volume=1;if(chosen)u.voice=chosen;
  activeUtterance=u;let started=false;
- const retry=()=>{
+ const recover=()=>{
   if(ticket!==speechGeneration)return;
-  if(attempt===0){speechSynthesisSafeCancel();const retryTicket=speechGeneration;speechTimer=setTimeout(()=>{if(retryTicket===speechGeneration)speakAvailable(text,force,1)},250)}
-  else{speechSynthesisSafeCancel();voiceStatus('Голос не запустился. Проверьте громкость iPad и выбранный русский голос, затем нажмите «Послушать».');if(settings.music)startMusic()}
+  const latest=item.request===speechRequest;
+  speechSynthesisSafeCancel(true);const retryTicket=speechGeneration;
+  if(!latest||item.attempt===0){
+   const retry=latest?{...item,attempt:1}:null;
+   speechTimer=setTimeout(()=>{if(retryTicket===speechGeneration)startNextSpeech(retry)},250);
+  }else{
+   speechQueue=[];
+   voiceStatus('Голос не запустился. Проверьте громкость iPad и выбранный русский голос, затем нажмите «Послушать».');if(settings.music)startMusic();
+  }
  };
- u.onstart=()=>{if(ticket!==speechGeneration)return;started=true;clearTimeout(speechTimer);voiceStatus('Озвучка запущена.')};
- u.onend=()=>{if(ticket!==speechGeneration)return;clearTimeout(speechTimer);activeUtterance=null;voiceStatus('Фраза завершена.');if(settings.music)startMusic()};
- u.onerror=e=>{if(ticket!==speechGeneration)return;clearTimeout(speechTimer);retry()};
+ u.onstart=()=>{if(ticket!==speechGeneration)return;started=true;clearTimeout(speechTimer);voiceStatus('Озвучка запущена: '+item.text);speechTimer=setTimeout(recover,Math.max(4000,item.text.length*120+2000))};
+ u.onend=()=>{if(ticket!==speechGeneration)return;clearTimeout(speechTimer);activeUtterance=null;if(speechQueue.length)startNextSpeech();else{voiceStatus('Фраза завершена.');if(settings.music)startMusic()}};
+ u.onerror=()=>{if(ticket===speechGeneration)recover()};
  const launch=()=>{
   if(ticket!==speechGeneration)return;
-  try{
-   if(typeof synth.resume==='function')synth.resume();
-   // Keep the first call synchronous with the tap (required by iPad Safari).
-   // Only wait after a real cancellation, so its callbacks cannot erase this phrase.
-   synth.speak(u);
-   if(!started&&activeUtterance===u)speechTimer=setTimeout(()=>{if(ticket===speechGeneration&&!started)retry()},1800);
-  }catch(e){retry()}
+  try{if(typeof synth.resume==='function')synth.resume();synth.speak(u);if(!started&&activeUtterance===u)speechTimer=setTimeout(recover,1800)}catch(e){recover()}
  };
+ // Normal taps and navigation enter the engine synchronously. A delay is used
+ // only to recover from a genuine engine error or explicit mute/cancellation.
  const wait=lastSpeechCancel?Math.max(0,250-(Date.now()-lastSpeechCancel)):0;
  if(wait)speechTimer=setTimeout(launch,wait);else launch();
 }
@@ -293,7 +308,7 @@ function bounded(promise,ms){return new Promise((resolve,reject)=>{const timer=s
 function verifyOffline(){
  const sw=window.navigator&&window.navigator.serviceWorker;
  if(!sw||!sw.controller||typeof MessageChannel==='undefined')return Promise.resolve(false);
- return new Promise(resolve=>{const channel=new MessageChannel();const timer=setTimeout(()=>{channel.port1.close();resolve(false)},4000);channel.port1.onmessage=e=>{clearTimeout(timer);channel.port1.close();resolve(!!(e.data&&e.data.ready&&e.data.version>=10))};sw.controller.postMessage({type:'VERIFY_OFFLINE'},[channel.port2])});
+ return new Promise(resolve=>{const channel=new MessageChannel();const timer=setTimeout(()=>{channel.port1.close();resolve(false)},4000);channel.port1.onmessage=e=>{clearTimeout(timer);channel.port1.close();resolve(!!(e.data&&e.data.ready&&e.data.version>=11))};sw.controller.postMessage({type:'VERIFY_OFFLINE'},[channel.port2])});
 }
 function updateOfflineStatus(){
  return verifyOffline().then(ready=>{const el=$('#offlineStatus');el.textContent=ready?'✓ Игра сохранена. Можно отключить Wi-Fi и VPN.':'Для игры без интернета нажмите «Сохранить». После установки откройте игру с экрана «Домой» с интернетом и проверьте сохранение ещё раз.';el.dataset.ready=String(ready);return ready}).catch(()=>false);
@@ -316,6 +331,7 @@ async function prepareOffline(){
 $('#saveOffline').onclick=prepareOffline;
 if(window.navigator&&window.navigator.serviceWorker&&window.location&&window.location.protocol!=='file:'){
  window.navigator.serviceWorker.addEventListener('controllerchange',updateOfflineStatus);
- // Do not register, download or update a worker while opening the lesson.
- // Offline setup starts only from the adult's Save button.
+ // Only check an existing offline installation, without awaiting it or blocking UI.
+ // A new installation still starts only from the adult's Save button.
+ window.addEventListener&&window.addEventListener('load',()=>{window.navigator.serviceWorker.getRegistration().then(reg=>{if(reg)reg.update().catch(()=>{})}).catch(()=>{})});
 }
