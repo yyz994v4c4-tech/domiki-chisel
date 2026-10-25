@@ -187,10 +187,48 @@ function renderReward(){
 }
 function nextTask(){clearTimeout(rewardTimer);closeDialog($('#rewardDialog'));if(state.solved>=taskLimit())return finish();state.step++;initTask();render();speak(instructionText())}
 function finish(){clearTimeout(rewardTimer);closeDialog($('#rewardDialog'));state.done=true;render();$('#finishText').textContent=`Выполнено заданий: ${state.solved}. ${state.solved?'Спасибо за старание!':'Продолжим в другой раз.'}`;openDialog($('#finishDialog'));speak('На сегодня готово. Теперь можно отдохнуть.');stopMusic()}
-function speechSynthesisSafeCancel(){try{if(window.speechSynthesis)window.speechSynthesis.cancel()}catch(e){}}
-function loadVoices(){try{if(!window.speechSynthesis||typeof window.speechSynthesis.getVoices!=='function')return;voices=window.speechSynthesis.getVoices().filter(v=>/^ru/i.test(v.lang));if($('#adultDialog').open)voiceOptions()}catch(e){voices=[]}}
-function speak(text,force=false){try{speakAvailable(text,force)}catch(e){}}
-function speakAvailable(text,force=false){if((!settings.voice&&!force)||!('speechSynthesis' in window))return;speechSynthesis.cancel();stopMusic();const u=new SpeechSynthesisUtterance(text);u.lang='ru-RU';u.rate=.82;u.pitch=1;u.volume=.72;const chosen=voices.find(v=>v.voiceURI===settings.voiceURI)||voices.find(v=>/milena|милена|katya|катя|irina|ирина/i.test(v.name))||voices[0];if(chosen)u.voice=chosen;u.onend=()=>{if(settings.music)startMusic()};u.onerror=()=>{if(settings.music)startMusic()};speechSynthesis.speak(u)}
+let activeUtterance=null,speechTimer=null,speechGeneration=0,lastSpeechCancel=0;
+function voiceStatus(text){const el=$('#voiceStatus');if(el)el.textContent=text}
+function speechSynthesisSafeCancel(){
+ clearTimeout(speechTimer);speechTimer=null;speechGeneration++;
+ try{const synth=window.speechSynthesis;if(synth&&(activeUtterance||synth.speaking||synth.pending)){activeUtterance=null;lastSpeechCancel=Date.now();synth.cancel()}}catch(e){activeUtterance=null}
+}
+function loadVoices(){try{if(!window.speechSynthesis||typeof window.speechSynthesis.getVoices!=='function')return;voices=window.speechSynthesis.getVoices().filter(v=>/^ru(?:[-_]|$)/i.test(v.lang));if($('#adultDialog').open)voiceOptions()}catch(e){voices=[]}}
+function speak(text,force=false){try{speakAvailable(text,force)}catch(e){voiceStatus('Не удалось запустить голос. Нажмите «Послушать» ещё раз.')}}
+function speakAvailable(text,force=false,attempt=0){
+ if(!settings.voice&&!force)return;
+ const synth=window.speechSynthesis,Utterance=window.SpeechSynthesisUtterance;
+ if(!synth||typeof synth.speak!=='function'||typeof Utterance!=='function'){voiceStatus('Браузер не предоставляет озвучку.');return}
+ // Refresh inside the tap handler: Safari may return no voices on page load.
+ loadVoices();speechSynthesisSafeCancel();stopMusic();
+ const ticket=speechGeneration;
+ const preferred=voices.find(v=>v.voiceURI===settings.voiceURI);
+ const local=voices.filter(v=>v.localService!==false);
+ const chosen=(attempt===0&&preferred)||local.find(v=>/milena|милена|katya|катя|irina|ирина/i.test(v.name))||local[0]||voices[0];
+ const u=new Utterance(String(text));u.lang='ru-RU';u.rate=.82;u.pitch=1;u.volume=1;if(chosen)u.voice=chosen;
+ // Keep a strong reference until the engine finishes the phrase.
+ activeUtterance=u;let started=false;
+ const retry=()=>{
+  if(ticket!==speechGeneration)return;
+  if(attempt===0){speechSynthesisSafeCancel();const retryTicket=speechGeneration;speechTimer=setTimeout(()=>{if(retryTicket===speechGeneration)speakAvailable(text,force,1)},250)}
+  else{speechSynthesisSafeCancel();voiceStatus('Голос не запустился. Проверьте громкость iPad и выбранный русский голос, затем нажмите «Послушать».');if(settings.music)startMusic()}
+ };
+ u.onstart=()=>{if(ticket!==speechGeneration)return;started=true;clearTimeout(speechTimer);voiceStatus('Озвучка запущена.')};
+ u.onend=()=>{if(ticket!==speechGeneration)return;clearTimeout(speechTimer);activeUtterance=null;voiceStatus('Фраза завершена.');if(settings.music)startMusic()};
+ u.onerror=e=>{if(ticket!==speechGeneration)return;clearTimeout(speechTimer);retry()};
+ const launch=()=>{
+  if(ticket!==speechGeneration)return;
+  try{
+   if(typeof synth.resume==='function')synth.resume();
+   // Keep the first call synchronous with the tap (required by iPad Safari).
+   // Only wait after a real cancellation, so its callbacks cannot erase this phrase.
+   synth.speak(u);
+   if(!started&&activeUtterance===u)speechTimer=setTimeout(()=>{if(ticket===speechGeneration&&!started)retry()},1800);
+  }catch(e){retry()}
+ };
+ const wait=lastSpeechCancel?Math.max(0,250-(Date.now()-lastSpeechCancel)):0;
+ if(wait)speechTimer=setTimeout(launch,wait);else launch();
+}
 function ensureAudio(){if(!audioCtx){const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return null;audioCtx=new AC()}if(audioCtx.state==='suspended')audioCtx.resume().catch(()=>{});return audioCtx}
 function softSound(){if(!settings.effects)return;const c=ensureAudio();if(!c)return;const osc=c.createOscillator(),g=c.createGain();osc.type='sine';osc.frequency.setValueAtTime(240,c.currentTime);osc.frequency.exponentialRampToValueAtTime(140,c.currentTime+.12);g.gain.setValueAtTime(.025,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.15);osc.connect(g).connect(c.destination);osc.start();osc.stop(c.currentTime+.16)}
 function musicNote(){if(!settings.music||state.done||document.hidden)return;const c=ensureAudio();if(!c)return;const tones=[174.61,196,220,261.63];const note=tones[Math.floor(Math.random()*tones.length)];const osc=c.createOscillator(),g=c.createGain();osc.type='sine';osc.frequency.value=note;g.gain.setValueAtTime(0,c.currentTime);g.gain.linearRampToValueAtTime(.009,c.currentTime+.7);g.gain.linearRampToValueAtTime(0,c.currentTime+2.7);osc.connect(g).connect(c.destination);osc.start();osc.stop(c.currentTime+3);musicNodes.push(osc);osc.onended=()=>{musicNodes=musicNodes.filter(x=>x!==osc)}}
@@ -255,7 +293,7 @@ function bounded(promise,ms){return new Promise((resolve,reject)=>{const timer=s
 function verifyOffline(){
  const sw=window.navigator&&window.navigator.serviceWorker;
  if(!sw||!sw.controller||typeof MessageChannel==='undefined')return Promise.resolve(false);
- return new Promise(resolve=>{const channel=new MessageChannel();const timer=setTimeout(()=>{channel.port1.close();resolve(false)},4000);channel.port1.onmessage=e=>{clearTimeout(timer);channel.port1.close();resolve(!!(e.data&&e.data.ready&&e.data.version>=9))};sw.controller.postMessage({type:'VERIFY_OFFLINE'},[channel.port2])});
+ return new Promise(resolve=>{const channel=new MessageChannel();const timer=setTimeout(()=>{channel.port1.close();resolve(false)},4000);channel.port1.onmessage=e=>{clearTimeout(timer);channel.port1.close();resolve(!!(e.data&&e.data.ready&&e.data.version>=10))};sw.controller.postMessage({type:'VERIFY_OFFLINE'},[channel.port2])});
 }
 function updateOfflineStatus(){
  return verifyOffline().then(ready=>{const el=$('#offlineStatus');el.textContent=ready?'✓ Игра сохранена. Можно отключить Wi-Fi и VPN.':'Для игры без интернета нажмите «Сохранить». После установки откройте игру с экрана «Домой» с интернетом и проверьте сохранение ещё раз.';el.dataset.ready=String(ready);return ready}).catch(()=>false);
