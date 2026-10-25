@@ -240,3 +240,31 @@ body.kid-ui #rewardTitle{font-size:48px}
  body.kid-ui .operation-math{font-size:46px;gap:9px}
  body.kid-ui #rewardTitle{font-size:40px}
 }
+
+/* Add objects on the right, then choose an answer in one row below. */
+body.kid-ui .addition-game .operation-grid{grid-template-columns:minmax(0,1fr) 180px;gap:20px;align-items:center}
+body.kid-ui .addition-game .addition-controls{align-self:center}
+body.kid-ui .addition-game .tray{grid-template-columns:30px 84px 24px;gap:4px;margin:0;padding:15px 8px}
+body.kid-ui .addition-game .add-sign{font-size:48px;font-weight:700;color:#527d93}
+body.kid-ui .addition-game .operation-answer-panel{grid-column:1/-1}
+body.kid-ui .addition-game .choices{display:flex;flex-wrap:nowrap;justify-content:center;gap:14px;margin:0 0 16px}
+body.kid-ui .addition-game .choice{width:94px;flex:0 1 94px;min-width:60px;padding:0}
+body.kid-ui .addition-game .action-row{max-width:300px;margin:0 auto}
+@media(max-width:600px){
+ body.kid-ui .addition-game .operation-grid{grid-template-columns:minmax(0,1fr) 104px;gap:12px}
+ body.kid-ui .addition-game .object-basin{padding:10px;gap:6px}
+ body.kid-ui .addition-game .tray{grid-template-columns:22px 62px;gap:3px;padding:10px 4px}
+ body.kid-ui .addition-game .tray-ball{width:62px;height:70px}
+ body.kid-ui .addition-game .tray-ball .object-symbol{font-size:45px}
+ body.kid-ui .addition-game .tap-hand{display:none}
+ body.kid-ui .addition-game .add-sign{font-size:36px}
+ body.kid-ui .addition-game .choices{gap:8px;margin:0 0 12px}
+ body.kid-ui .addition-game .operation-answer-panel .choice{width:66px;flex:0 1 66px;min-width:52px}
+}
+
+/* The answer action is a large, consistently green check mark. */
+body.kid-ui .action-row{grid-template-columns:1fr 1.7fr 1fr}
+body.kid-ui .check-action{min-height:96px;font-size:56px;font-weight:750;color:#fff;background:#2e854b;border:2px solid #246b3d;border-radius:20px;box-shadow:0 5px 0 #205f35;line-height:1}
+body.kid-ui .check-action:hover:not(:disabled){background:#287641}
+body.kid-ui .check-action:active{transform:translateY(2px);box-shadow:0 3px 0 #205f35}
+body.kid-ui .addition-game .action-row,body.kid-ui .compare-game .action-row{max-width:340px}
