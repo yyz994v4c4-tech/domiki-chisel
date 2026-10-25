@@ -268,3 +268,6 @@ body.kid-ui .check-action{min-height:96px;font-size:56px;font-weight:750;color:#
 body.kid-ui .check-action:hover:not(:disabled){background:#287641}
 body.kid-ui .check-action:active{transform:translateY(2px);box-shadow:0 3px 0 #205f35}
 body.kid-ui .addition-game .action-row,body.kid-ui .compare-game .action-row{max-width:340px}
+
+/* Adult-only sound check: always readable, including on iPad. */
+.sound-check{padding:16px;margin:18px 0;border:2px solid #aec6d4;border-radius:16px;background:#f1f6f8}.sound-check h3{margin:0 0 12px}.sound-check audio{display:block;width:100%;min-height:54px;margin:10px 0}.sound-check #voiceStatus,.sound-check #audioStatus{display:block!important;position:static!important;height:auto!important;min-height:44px;margin:12px 0!important;padding:10px!important;overflow:visible!important;clip:auto!important;white-space:normal!important;font-size:16px!important;line-height:1.5;color:#263f4a!important;background:white;border-radius:8px}.sound-check #testVoice{min-height:56px;font-size:17px}

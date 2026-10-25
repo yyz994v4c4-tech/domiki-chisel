@@ -187,7 +187,7 @@ function renderReward(){
 }
 function nextTask(){clearTimeout(rewardTimer);closeDialog($('#rewardDialog'));if(state.solved>=taskLimit())return finish();state.step++;initTask();render();speak(instructionText())}
 function finish(){clearTimeout(rewardTimer);closeDialog($('#rewardDialog'));state.done=true;render();$('#finishText').textContent=`Выполнено заданий: ${state.solved}. ${state.solved?'Спасибо за старание!':'Продолжим в другой раз.'}`;openDialog($('#finishDialog'));speak('На сегодня готово. Теперь можно отдохнуть.');stopMusic()}
-let activeUtterance=null,speechTimer=null,speechGeneration=0,lastSpeechCancel=0,speechQueue=[],speechRequest=0;
+let activeUtterance=null,speechTimer=null,speechGeneration=0,lastSpeechCancel=0,lastSpeechError='',speechQueue=[],speechRequest=0;
 function voiceStatus(text){const el=$('#voiceStatus');if(el)el.textContent=text}
 function clearPendingSpeech(){speechQueue=[];speechRequest++}
 function speechSynthesisSafeCancel(keepQueue=false){
@@ -196,11 +196,13 @@ function speechSynthesisSafeCancel(keepQueue=false){
  try{const synth=window.speechSynthesis;if(synth&&(activeUtterance||synth.speaking||synth.pending)){activeUtterance=null;lastSpeechCancel=Date.now();synth.cancel()}}catch(e){activeUtterance=null}
 }
 function loadVoices(){try{if(!window.speechSynthesis||typeof window.speechSynthesis.getVoices!=='function')return;voices=window.speechSynthesis.getVoices().filter(v=>/^ru(?:[-_]|$)/i.test(v.lang));if($('#adultDialog').open)voiceOptions()}catch(e){voices=[]}}
-function speak(text,force=false){try{speakAvailable(text,force)}catch(e){voiceStatus('Не удалось запустить голос. Нажмите «Послушать» ещё раз.')}}
+function speak(text,force=false){try{speakAvailable(text,force)}catch(e){voiceStatus('Ошибка запуска голоса: '+(e.name||'неизвестная')+'. Попробуйте выбрать другой русский голос.')}}
 function speakAvailable(text,force=false){
  if(!settings.voice&&!force)return;
  const synth=window.speechSynthesis,Utterance=window.SpeechSynthesisUtterance;
  if(!synth||typeof synth.speak!=='function'||typeof Utterance!=='function'){voiceStatus('Браузер не предоставляет озвучку.');return}
+ const probe=$('#testAudio');if(probe&&typeof probe.pause==='function')probe.pause();
+ voiceStatus('Запрашиваю голос…');lastSpeechError='';
  const request=++speechRequest;
  // Keep only the latest instruction. Short phrases finish without cancel(),
  // which otherwise drops the next user-initiated utterance in older Safari.
@@ -217,7 +219,9 @@ function startNextSpeech(retryItem){
  const ticket=++speechGeneration;
  const preferred=voices.find(v=>v.voiceURI===settings.voiceURI);
  const local=voices.filter(v=>v.localService!==false);
- const chosen=(item.attempt===0&&preferred)||local.find(v=>/milena|милена|katya|катя|irina|ирина/i.test(v.name))||local[0]||voices[0];
+ // Safari resolves the default ru-RU voice itself. Assign an explicit voice
+ // only for a user choice, or as recovery after the default has failed.
+ const chosen=item.attempt===0?preferred:(local.find(v=>/milena|милена|katya|катя|irina|ирина/i.test(v.name))||local[0]||voices[0]);
  const u=new Utterance(item.text);u.lang='ru-RU';u.rate=.82;u.pitch=1;u.volume=1;if(chosen)u.voice=chosen;
  activeUtterance=u;let started=false;
  const recover=()=>{
@@ -229,15 +233,15 @@ function startNextSpeech(retryItem){
    speechTimer=setTimeout(()=>{if(retryTicket===speechGeneration)startNextSpeech(retry)},250);
   }else{
    speechQueue=[];
-   voiceStatus('Голос не запустился. Проверьте громкость iPad и выбранный русский голос, затем нажмите «Послушать».');if(settings.music)startMusic();
+   voiceStatus('Голос не запустился'+(lastSpeechError?' ('+lastSpeechError+')':': Safari не ответил')+'. Русских голосов: '+voices.length+'. Проверьте сигналы выше и попробуйте выбрать другой голос.');if(settings.music)startMusic();
   }
  };
  u.onstart=()=>{if(ticket!==speechGeneration)return;started=true;clearTimeout(speechTimer);voiceStatus('Озвучка запущена: '+item.text);speechTimer=setTimeout(recover,Math.max(4000,item.text.length*120+2000))};
  u.onend=()=>{if(ticket!==speechGeneration)return;clearTimeout(speechTimer);activeUtterance=null;if(speechQueue.length)startNextSpeech();else{voiceStatus('Фраза завершена.');if(settings.music)startMusic()}};
- u.onerror=()=>{if(ticket===speechGeneration)recover()};
+ u.onerror=e=>{if(ticket===speechGeneration){lastSpeechError=e&&e.error||'speech-error';recover()}};
  const launch=()=>{
   if(ticket!==speechGeneration)return;
-  try{if(typeof synth.resume==='function')synth.resume();synth.speak(u);if(!started&&activeUtterance===u)speechTimer=setTimeout(recover,1800)}catch(e){recover()}
+  try{if(typeof synth.resume==='function')synth.resume();synth.speak(u);if(!started&&activeUtterance===u)speechTimer=setTimeout(recover,1800)}catch(e){lastSpeechError=e.name||'speak-error';recover()}
  };
  // Normal taps and navigation enter the engine synchronously. A delay is used
  // only to recover from a genuine engine error or explicit mute/cancellation.
@@ -249,7 +253,7 @@ function softSound(){if(!settings.effects)return;const c=ensureAudio();if(!c)ret
 function musicNote(){if(!settings.music||state.done||document.hidden)return;const c=ensureAudio();if(!c)return;const tones=[174.61,196,220,261.63];const note=tones[Math.floor(Math.random()*tones.length)];const osc=c.createOscillator(),g=c.createGain();osc.type='sine';osc.frequency.value=note;g.gain.setValueAtTime(0,c.currentTime);g.gain.linearRampToValueAtTime(.009,c.currentTime+.7);g.gain.linearRampToValueAtTime(0,c.currentTime+2.7);osc.connect(g).connect(c.destination);osc.start();osc.stop(c.currentTime+3);musicNodes.push(osc);osc.onended=()=>{musicNodes=musicNodes.filter(x=>x!==osc)}}
 function startMusic(){stopMusic();if(!settings.music||state.done)return;musicNote();musicTimer=setInterval(musicNote,3300)}
 function stopMusic(){clearInterval(musicTimer);musicNodes.forEach(n=>{try{n.stop()}catch{}});musicNodes=[]}
-function voiceOptions(){const el=$('#setVoice');el.innerHTML='';if(!voices.length){const opt=new Option('Русский голос устройства (если доступен)','');el.add(opt)}else{el.add(new Option('Автоматически: русский голос',''));voices.forEach(v=>el.add(new Option(v.name,v.voiceURI)))}el.value=settings.voiceURI}
+function voiceOptions(){const el=$('#setVoice');el.innerHTML='';if(!voices.length){const opt=new Option('Русский голос устройства (если доступен)','');el.add(opt)}else{el.add(new Option('Автоматически — выбирает Safari',''));voices.forEach(v=>el.add(new Option(v.name,v.voiceURI)))}el.value=settings.voiceURI}
 function openAdult(){
  updateOfflineStatus();
  $('#setNumber').innerHTML=Array.from({length:10},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('');$('#setNumber').value=state.n;$('#setLength').value=settings.length;$('#setReward').value=settings.reward;$('#setSpeech').checked=settings.voice;$('#setMusic').checked=settings.music;$('#setEffects').checked=settings.effects;voiceOptions();
@@ -263,7 +267,28 @@ $$('.representation button').forEach(b=>b.onclick=()=>{settings.rep=b.dataset.re
 $('#voiceToggle').onclick=()=>{settings.voice=!settings.voice;save();updateVoiceToggle();settings.voice?speak(instructionText()):speechSynthesisSafeCancel()};
 $('#adultOpen').onclick=openAdult;$('#howOpen').onclick=()=>openDialog($('#helpDialog'));
 $$('[data-close]').forEach(b=>b.onclick=()=>closeDialog($('#'+b.dataset.close)));
-$('#testVoice').onclick=()=>{const saved=settings.voiceURI;settings.voiceURI=$('#setVoice').value;speak('Давай заселим домик. Один и два. Вместе три.',true);settings.voiceURI=saved};
+$('#testVoice').onclick=()=>{
+ voiceStatus('Кнопка нажата. Запрашиваю короткую фразу…');
+ const saved=settings.voiceURI;settings.voiceURI=$('#setVoice').value;
+ const synth=window.speechSynthesis;
+ // A new tap recovers stale JS state if native speech has already stopped.
+ if(activeUtterance&&synth&&!synth.speaking&&!synth.pending){clearTimeout(speechTimer);speechGeneration++;activeUtterance=null;lastSpeechCancel=0}
+ speak('Один и два. Вместе три.',true);settings.voiceURI=saved;
+};
+const testAudio=$('#testAudio');
+$('#testSignal').onclick=()=>{
+ const status=$('#audioStatus');status.textContent='Включаю два сигнала…';
+ speechSynthesisSafeCancel();stopMusic();
+ try{testAudio.currentTime=0;testAudio.volume=1;testAudio.muted=false;
+ const playback=testAudio.play();if(playback&&playback.catch)playback.catch(e=>{status.textContent='Сигналы не запустились: '+(e.name||'ошибка')+'. Попробуйте кнопку воспроизведения на полоске.'});
+ }catch(e){status.textContent='Не удалось включить сигналы: '+(e.name||'ошибка')}
+};
+if(testAudio&&typeof testAudio.addEventListener==='function'){
+ testAudio.addEventListener('playing',()=>{$('#audioStatus').textContent='Сигналы воспроизводятся. Слышны ли они?'});
+ testAudio.addEventListener('ended',()=>{$('#audioStatus').textContent='Сигналы завершились. Слышны ли были два звука?'});
+ testAudio.addEventListener('error',()=>{$('#audioStatus').textContent='Не удалось включить сигналы. Код: '+(testAudio.error&&testAudio.error.code||'неизвестен')});
+}
+
 $('#saveSettings').onclick=()=>{
  const n=+$('#setNumber').value,len=$('#setLength').value;const restart=n!==state.n||len!==settings.length;
  settings={...settings,number:n,length:len,reward:$('#setReward').value,voiceURI:$('#setVoice').value,voice:$('#setSpeech').checked,music:$('#setMusic').checked,effects:$('#setEffects').checked};save();updateVoiceToggle();closeDialog($('#adultDialog'));if(restart)newSession(state.mode,n);if(!settings.voice)speechSynthesisSafeCancel();startMusic();
@@ -308,7 +333,7 @@ function bounded(promise,ms){return new Promise((resolve,reject)=>{const timer=s
 function verifyOffline(){
  const sw=window.navigator&&window.navigator.serviceWorker;
  if(!sw||!sw.controller||typeof MessageChannel==='undefined')return Promise.resolve(false);
- return new Promise(resolve=>{const channel=new MessageChannel();const timer=setTimeout(()=>{channel.port1.close();resolve(false)},4000);channel.port1.onmessage=e=>{clearTimeout(timer);channel.port1.close();resolve(!!(e.data&&e.data.ready&&e.data.version>=11))};sw.controller.postMessage({type:'VERIFY_OFFLINE'},[channel.port2])});
+ return new Promise(resolve=>{const channel=new MessageChannel();const timer=setTimeout(()=>{channel.port1.close();resolve(false)},4000);channel.port1.onmessage=e=>{clearTimeout(timer);channel.port1.close();resolve(!!(e.data&&e.data.ready&&e.data.version>=12))};sw.controller.postMessage({type:'VERIFY_OFFLINE'},[channel.port2])});
 }
 function updateOfflineStatus(){
  return verifyOffline().then(ready=>{const el=$('#offlineStatus');el.textContent=ready?'✓ Игра сохранена. Можно отключить Wi-Fi и VPN.':'Для игры без интернета нажмите «Сохранить». После установки откройте игру с экрана «Домой» с интернетом и проверьте сохранение ещё раз.';el.dataset.ready=String(ready);return ready}).catch(()=>false);
